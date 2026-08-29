@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 
 class Prayer(models.TextChoices):
@@ -20,29 +21,43 @@ class Gender(models.TextChoices):
     FEMALE = "female", "Female"
 
 
+class ProfileType(models.TextChoices):
+    SELF = "self", "Self"
+    CHILD = "child", "Child"
+
 class Profile(models.Model):
     """
-    App-specific data layered on top of Django's built-in auth user.
-    Supports both solo accounts and family mode via the self-referential
-    `parent` field: a child profile's `parent` points at the managing
-    parent's profile. Solo/parent profiles have `parent = None`.
+    One row per person tracked in the app. A single account (`user`) can own
+    multiple profiles: exactly one `self` profile plus any number of `child`
+    profiles — this is how family mode works. A solo user simply has one
+    `self` profile and no children.
+
+    Matches the spec's `profiles` table: id, user_id (FK), display_name,
+    type (self|child), age, madhhab, qada_enabled, created_at — extended
+    with the extra fields the qada calculator and prayer-time API need.
     """
 
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile"
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profiles"
     )
-    parent = models.ForeignKey(
-        "self",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="children",
-        help_text="Set for child profiles managed under a parent's family mode account.",
-    )
+    type = models.CharField(max_length=5, choices=ProfileType.choices, default=ProfileType.SELF)
 
     display_name = models.CharField(max_length=100)
 
-    # Qada setup fields (filled in during Day 13's qada setup flow)
+    # Simple, optional — per spec, only used to shape reminder tone for
+    # child profiles during onboarding's "add child" step. Distinct from
+    # birth_date below, which feeds the qada debt calculation.
+    age = models.PositiveSmallIntegerField(
+        null=True, blank=True, help_text="Optional. Shapes reminder tone only, nothing else."
+    )
+
+    qada_enabled = models.BooleanField(
+        default=True,
+        help_text="Off for children just building the habit; on by default for adult/self profiles.",
+    )
+
+    # Qada setup fields (Day 9 / spec section 3) — birth_date/bulugh_age/
+    # practice_start_date define the missed-prayer window for debt calc.
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, choices=Gender.choices, null=True, blank=True)
     bulugh_age = models.PositiveSmallIntegerField(
@@ -57,7 +72,7 @@ class Profile(models.Model):
     )
 
     # Prayer-time calculation preferences (used by the Aladhan API integration)
-    madhhab = models.CharField(max_length=10, choices=Madhhab.choices, default=Madhhab.SHAFI)
+    madhhab = models.CharField(max_length=10, choices=Madhhab.choices, default=Madhhab.HANAFI)
     calculation_method = models.PositiveSmallIntegerField(
         default=2, help_text="Aladhan API calculation method ID."
     )
@@ -71,26 +86,42 @@ class Profile(models.Model):
 
     class Meta:
         db_table = "profiles"
+        constraints = [
+            # Exactly one "self" profile per account; any number of "child" profiles.
+            models.UniqueConstraint(
+                fields=["user", "type"],
+                condition=Q(type="self"),
+                name="one_self_profile_per_user",
+            )
+        ]
 
     def __str__(self):
-        return self.display_name or self.user.username
+        return self.display_name or f"{self.user}'s profile"
+
+
+class PrayerStatus(models.TextChoices):
+    UNMARKED = "unmarked", "Unmarked"
+    DONE = "done", "Done"
+    LATE = "late", "Late"
 
 
 class PrayerLog(models.Model):
     """
-    One row per prayer per day per profile — today-forward logging (tapping
-    a prayer as done). Historical backlog before the user started tracking
-    lives in QadaDebt/QadaLog instead.
+    One row per prayer per day per profile. `status` is a 3-state enum per
+    the spec (unmarked/done/late) rather than a plain boolean, so the v2
+    "late" distinction (deferred, but modeled now) doesn't need a migration
+    later.
     """
 
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="prayer_logs")
     date = models.DateField()
     prayer = models.CharField(max_length=10, choices=Prayer.choices)
-    completed = models.BooleanField(default=False)
-    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=10, choices=PrayerStatus.choices, default=PrayerStatus.UNMARKED
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)  # doubles as the spec's `logged_at`
 
     class Meta:
         db_table = "prayer_logs"
@@ -102,19 +133,19 @@ class PrayerLog(models.Model):
         indexes = [models.Index(fields=["profile", "date"])]
 
     def __str__(self):
-        return f"{self.profile} — {self.prayer} on {self.date}"
+        return f"{self.profile} — {self.prayer} on {self.date}: {self.status}"
 
 
 class QadaDebt(models.Model):
     """
     Running total of missed prayers owed per prayer type. One row per
-    profile per prayer; `owed_count` is decremented as QadaLog entries
-    are recorded and recalculated from birth_date/bulugh_age/practice_start_date.
+    profile per prayer; `remaining_count` is decremented as QadaLog entries
+    are recorded.
     """
 
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="qada_debts")
     prayer = models.CharField(max_length=10, choices=Prayer.choices)
-    owed_count = models.PositiveIntegerField(default=0)
+    remaining_count = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -124,7 +155,7 @@ class QadaDebt(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.profile} owes {self.owed_count} {self.prayer}"
+        return f"{self.profile} has {self.remaining_count} {self.prayer} remaining"
 
 
 class QadaLog(models.Model):
@@ -143,13 +174,12 @@ class QadaLog(models.Model):
 
 
 class Streak(models.Model):
-    """Current/longest streak of days with all 5 prayers completed on time."""
+    """Current/longest streak of days with all 5 prayers completed (done or late)."""
 
     profile = models.OneToOneField(Profile, on_delete=models.CASCADE, related_name="streak")
     current_streak = models.PositiveIntegerField(default=0)
     longest_streak = models.PositiveIntegerField(default=0)
-    last_completed_date = models.DateField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    last_calculated_date = models.DateField(null=True, blank=True)
 
     class Meta:
         db_table = "streaks"
@@ -158,21 +188,27 @@ class Streak(models.Model):
         return f"{self.profile}: {self.current_streak} day streak"
 
 
+class NotificationTone(models.TextChoices):
+    STANDARD = "standard", "Standard"
+    GENTLE = "gentle", "Gentle"
+
+
 class NotificationSettings(models.Model):
-    """Per-profile notification preferences."""
+    """
+    Per-profile notification preferences. Simplified to match the spec: one
+    overall on/off toggle (not per-prayer), a copy tone for adult vs.
+    child-friendly wording, and a parent-mute flag for family mode.
+    """
 
     profile = models.OneToOneField(
         Profile, on_delete=models.CASCADE, related_name="notification_settings"
     )
-    fajr_enabled = models.BooleanField(default=True)
-    dhuhr_enabled = models.BooleanField(default=True)
-    asr_enabled = models.BooleanField(default=True)
-    maghrib_enabled = models.BooleanField(default=True)
-    isha_enabled = models.BooleanField(default=True)
-    reminder_minutes_before = models.PositiveSmallIntegerField(default=10)
-    qada_reminders_enabled = models.BooleanField(default=True)
-    family_digest_enabled = models.BooleanField(
-        default=False, help_text="For parent profiles: daily summary of children's progress."
+    enabled = models.BooleanField(default=True)
+    tone = models.CharField(
+        max_length=10, choices=NotificationTone.choices, default=NotificationTone.STANDARD
+    )
+    muted_by_parent = models.BooleanField(
+        default=False, help_text="Parent can mute a child's notifications from the family dashboard."
     )
     updated_at = models.DateTimeField(auto_now=True)
 

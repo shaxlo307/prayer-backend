@@ -27,6 +27,14 @@ DEBUG = env.bool("DEBUG", default=False)
 
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
+# In local dev (DEBUG=True), be permissive about ALLOWED_HOSTS — testing
+# from a phone means requests arrive at your machine's LAN IP (e.g.
+# 192.168.1.23), which isn't "localhost" and would otherwise be rejected
+# with DisallowedHost. This never applies in production: Railway/Fly always
+# set DEBUG=False and their own explicit ALLOWED_HOSTS.
+if DEBUG:
+    ALLOWED_HOSTS = ["*"]
+
 # Railway/Fly put the app behind a proxy that terminates TLS, so trust their
 # forwarded-proto header and allow their generated domains for CSRF.
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
@@ -43,8 +51,19 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
+    "rest_framework",
     "core",
 ]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -85,16 +104,14 @@ DATABASE_URL = env("DATABASE_URL", default=None)
 if DATABASE_URL:
     DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 else:
-    
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'prayerapp_db',
-            'USER': 'prayerapp',
-            'PASSWORD': '1234',  # Forced to match your pgAdmin update!
-            'HOST': '127.0.0.1',
-            'PORT': '5432'
-            
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env("DB_NAME", default="prayerapp_db"),
+            "USER": env("DB_USER", default="prayerapp"),
+            "PASSWORD": env("DB_PASSWORD", default="prayerapp_dev"),
+            "HOST": env("DB_HOST", default="localhost"),
+            "PORT": env("DB_PORT", default="5432"),
         }
     }
 

@@ -1,26 +1,24 @@
 from django.contrib import admin
 
-# Register your models here.
-
 from .models import NotificationSettings, PrayerLog, Profile, QadaDebt, QadaLog, Streak
 
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "user", "parent", "madhhab", "created_at")
-    list_filter = ("madhhab", "gender")
+    list_display = ("display_name", "user", "type", "madhhab", "qada_enabled", "created_at")
+    list_filter = ("type", "madhhab", "gender", "qada_enabled")
     search_fields = ("display_name", "user__username")
 
 
 @admin.register(PrayerLog)
 class PrayerLogAdmin(admin.ModelAdmin):
-    list_display = ("profile", "date", "prayer", "completed")
-    list_filter = ("prayer", "completed", "date")
+    list_display = ("profile", "date", "prayer", "status")
+    list_filter = ("prayer", "status", "date")
 
 
 @admin.register(QadaDebt)
 class QadaDebtAdmin(admin.ModelAdmin):
-    list_display = ("profile", "prayer", "owed_count", "updated_at")
+    list_display = ("profile", "prayer", "remaining_count", "updated_at")
     list_filter = ("prayer",)
 
 
@@ -32,9 +30,10 @@ class QadaLogAdmin(admin.ModelAdmin):
 
 @admin.register(Streak)
 class StreakAdmin(admin.ModelAdmin):
-    list_display = ("profile", "current_streak", "longest_streak", "last_completed_date")
+    list_display = ("profile", "current_streak", "longest_streak", "last_calculated_date")
 
 
 @admin.register(NotificationSettings)
 class NotificationSettingsAdmin(admin.ModelAdmin):
-    list_display = ("profile", "reminder_minutes_before", "family_digest_enabled")
+    list_display = ("profile", "enabled", "tone", "muted_by_parent")
+    list_filter = ("tone", "muted_by_parent")

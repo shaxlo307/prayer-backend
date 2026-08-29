@@ -15,11 +15,19 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
-from core.views import health_check
+from core.views import PrayerLogViewSet, ProfileViewSet, health_check, register_device
+
+router = DefaultRouter()
+router.register(r'profiles', ProfileViewSet, basename='profile')
+router.register(r'prayer-logs', PrayerLogViewSet, basename='prayer-log')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', health_check, name='health-check'),
+    path('api/register/', register_device, name='register-device'),
+    path('api/', include(router.urls)),
+    path('api-auth/', include('rest_framework.urls')),  # browsable API login/logout
 ]
