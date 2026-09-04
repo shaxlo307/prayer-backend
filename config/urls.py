@@ -18,11 +18,18 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from core.views import PrayerLogViewSet, ProfileViewSet, health_check, register_device
+from core.views import (
+    PrayerLogViewSet,
+    ProfileViewSet,
+    QadaDebtViewSet,
+    health_check,
+    register_device,
+)
 
 router = DefaultRouter()
 router.register(r'profiles', ProfileViewSet, basename='profile')
 router.register(r'prayer-logs', PrayerLogViewSet, basename='prayer-log')
+router.register(r'qada-debt', QadaDebtViewSet, basename='qada-debt')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import PrayerLog, Profile
+from .models import PrayerLog, Profile, QadaDebt
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -53,3 +53,17 @@ class PrayerLogSerializer(serializers.ModelSerializer):
                 "You can only log prayers to a profile in your own account."
             )
         return profile
+
+
+class QadaDebtSerializer(serializers.ModelSerializer):
+    """
+    Read-only: rows are written only via the calculation logic
+    (core/qada.py) and, from Day 16 on, qada-log decrements -- never
+    directly through this serializer, so a client can't set an arbitrary
+    remaining_count by PATCHing it.
+    """
+
+    class Meta:
+        model = QadaDebt
+        fields = ["id", "profile", "prayer", "initial_count", "remaining_count", "updated_at"]
+        read_only_fields = fields

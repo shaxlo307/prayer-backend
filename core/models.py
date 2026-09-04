@@ -140,11 +140,18 @@ class QadaDebt(models.Model):
     """
     Running total of missed prayers owed per prayer type. One row per
     profile per prayer; `remaining_count` is decremented as QadaLog entries
-    are recorded.
+    are recorded (Day 16). `initial_count` is set once at calculation time
+    and left untouched afterward -- it's the fixed baseline the Day 15
+    progress bars divide against (remaining_count alone can't show "how
+    far along" once it starts decreasing).
     """
 
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="qada_debts")
     prayer = models.CharField(max_length=10, choices=Prayer.choices)
+    initial_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Debt computed at calculation time. Fixed baseline for progress-bar percentage; not decremented by logging.",
+    )
     remaining_count = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 

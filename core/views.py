@@ -4,11 +4,13 @@ import string
 from django.contrib.auth.models import User
 from django.http import JsonResponse
 from rest_framework import permissions, status, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from .models import PrayerLog, Profile
-from .serializers import PrayerLogSerializer, ProfileSerializer
+from .models import PrayerLog, Profile, QadaDebt
+from .qada import QadaSetupIncomplete, recalculate_and_store_qada_debt
+from .serializers import PrayerLogSerializer, ProfileSerializer, QadaDebtSerializer
 
 
 class IsOwner(permissions.BasePermission):
@@ -36,6 +38,45 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="calculate-qada-debt")
+    def calculate_qada_debt(self, request, pk=None):
+        """
+        Day 14: computes (and stores) the initial qada debt for this
+        profile from its birth_date/bulugh_age/gender/practice_start_date
+        fields (Day 13's qada setup). Returns the resulting QadaDebt rows,
+        one per prayer type.
+
+        Safe to call more than once: if debt rows already exist for this
+        profile, they're returned unchanged unless the request body
+        includes {"force": true} -- see
+        core.qada.recalculate_and_store_qada_debt's docstring for why
+        (protects Day 16's future logged qada progress from being wiped
+        by a repeat calculation).
+        """
+        profile = self.get_object()
+        force = bool(request.data.get("force", False))
+        try:
+            rows = recalculate_and_store_qada_debt(profile, force=force)
+        except QadaSetupIncomplete as exc:
+            raise ValidationError({"detail": str(exc)})
+        return Response(QadaDebtSerializer(rows, many=True).data)
+
+
+class QadaDebtViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only: rows are written only via
+    ProfileViewSet.calculate_qada_debt (and, from Day 16 on, qada-log
+    decrements) -- never directly through this endpoint.
+    """
+
+    serializer_class = QadaDebtSerializer
+    permission_classes = [permissions.IsAuthenticated, IsOwner]
+
+    def get_queryset(self):
+        return QadaDebt.objects.filter(profile__user=self.request.user).order_by(
+            "profile", "prayer"
+        )
 
 
 class PrayerLogViewSet(viewsets.ModelViewSet):
